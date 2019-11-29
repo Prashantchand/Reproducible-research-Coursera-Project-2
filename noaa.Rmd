@@ -1,0 +1,160 @@
+---
+title: "Analysis of the Adverse Health and Economic Impacts of US Storms"
+Author: "Prashant Chand"
+Date: "27/11/2019"
+output: html_document
+---
+
+  
+## 1. Synopsis
+The goal of the assignment is to explore the NOAA Storm Database and explore the effects of severe weather events on both population and economy.
+
+The following analysis investigates which types of severe weather events are most harmful on:
+
+1. Health  
+2. Property and crops 
+
+## 2. Data Processing
+  
+### 2.1:Data Loading  
+
+Downloading data file and unzipping
+```{r}
+path<-getwd()
+filename<-"StormData.csv.bz2"
+if(!file.exists(filename)){
+  url<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+  download.file(url,destfile = paste(path,filename))
+}
+file<-"StormData.csv.bz2"
+if(!file.exists(file)){
+  unzip(filename)
+}
+```
+
+Loading required packages and reading data into a variable 
+```{r}  
+library(ggplot2)
+library(dplyr)
+library(wrapr)
+library(lubridate)
+stormdata<-read.csv("StormData.csv")
+```
+  
+### 2.2 :Examining Columns
+  
+Examining column names to have an idea which ones to keep
+```{r}
+colnames(stormdata)
+```
+### 2.3 :Data Subsetting  
+
+Subsetting required columns so that only required columns remain which we require further on in our analysis
+```{r}
+required_data<-stormdata[,c("BGN_DATE","EVTYPE","FATALITIES","INJURIES","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP")]
+required_data<-filter(required_data,(FATALITIES|INJURIES|PROPDMG|CROPDMG)>0)
+required_data$PROPDMGEXP<-toupper(required_data$PROPDMGEXP)
+required_data$CROPDMGEXP<-toupper(required_data$CROPDMGEXP)
+```
+  
+Making EVTYPE column and creating a new column EVENT to match with the only 48 events that were initially recorded by the NOAA.All other columns were either typo or repetition of the same type of event.
+```{r}
+storms <- c("Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood", "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke", "Drought", "Dust Devil", "Dust Storm", "Excessive Heat", "Extreme Cold/Wind Chill", "Flash Flood", "Flood", "Frost/Freeze", "Funnel Cloud", "Freezing Fog", "Hail", "Heat", "Heavy Rain", "Heavy Snow", "High Surf", "High Wind", "Hurricane", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood", "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind", "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet", "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado", "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "Waterspout", "Wildfire", "Winter Storm", "Winter Weather")
+for (i in 1:length(storms)){
+  required_data[regexpr(paste("^", storms[i], "\\b", sep = ""), required_data$EVTYPE, ignore.case=TRUE)>0, "EVENT"] <- storms[i]
+}
+```
+Subsetting data that starts from Jan 1996 as we know that all events started recording after Jan 1996.Before Jan 1996 only a few events were recorded
+
+```{r}
+required_data <- required_data %>% mutate(DATE = as.Date(BGN_DATE, format="%m/%d/%Y")) %>% select(-BGN_DATE) %>% filter(year(DATE) >= 1996)
+```
+
+### 2.4 :Mapping exponetial values e.g(K,M,B,+,-) into actual numeric values
+  
+Mapping exp values in CROPDMGEXP & PROPDMGEXP columns into actual numeric values
+```{r}  
+map<-qc(c("","-","+","?","0","2","3","4","5","6","7","K","M","B")):= qc(c(10^0,10^0,10^1,10^0,10^0,10^2,10^3,10^4,10^5,10^6,10^7,10^3,10^6,10^9))
+required_data$CROPDMGEXP<-map[required_data$CROPDMGEXP]
+required_data$PROPDMGEXP<-map[required_data$PROPDMGEXP]
+```
+  
+Mapping NA values that were introduced due to coercion to 1
+```{r}
+required_data[is.na(required_data$CROPDMGEXP),]$CROPDMGEXP<-10^0
+required_data[is.na(required_data$PROPDMGEXP),]$PROPDMGEXP<-10^0
+```
+  
+Converting character columns into numeric columns so that they can be used in arithmetic operations further
+```{r}
+required_data$PROPDMGEXP<-as.numeric(as.character(required_data$PROPDMGEXP))
+required_data$CROPDMGEXP<-as.numeric(as.character(required_data$CROPDMGEXP))
+```
+
+### 2.5 :Calculating Total Crop loss and property loss
+  
+Creating columns cropCost and propCost
+```{r}
+required_data<-mutate(required_data,propCost=PROPDMG*PROPDMGEXP,cropCost=CROPDMG*CROPDMGEXP)
+```
+  
+Creating prop_damage and crop_damage variables to get the total property and cost damage grouped by the variable EVENT
+```{r}
+prop_dmg<-aggregate(propCost~EVENT,data = required_data,FUN = sum)
+crop_dmg<-aggregate(cropCost~EVENT,data=required_data,FUN = sum)
+```
+
+Merging the to datasets by the variable EVENT to create one dataset
+```{r}
+total_dmg<-merge(prop_dmg,crop_dmg,by="EVENT")
+```
+
+Creating a new column to get the total damage
+```{r}
+total_dmg<-mutate(total_dmg,total_loss=propCost+cropCost)
+```
+
+Ordering the variable total_loss in descending order so that we can subset the top events that have the  greatest economic consequences
+```{r}
+ total_dmg<-total_dmg[order(-total_dmg$total_loss),]
+total_dmg<-total_dmg[1:10,]
+```
+
+### 2.6 :Calculating total fatalities and injuries
+
+Doing the same set of steps as in the above portion
+```{r}
+fatalities<-aggregate(FATALITIES~EVENT,data = required_data,FUN = sum)
+injuries<-aggregate(INJURIES~EVENT,data=required_data,FUN = sum)
+
+total_injuries<-merge(fatalities,injuries,by="EVENT")
+total_injuries<-mutate(total_injuries,total=FATALITIES+INJURIES)
+total_injuries<-total_injuries[order(-total_injuries$total),]
+total_injuries<-total_injuries[1:10,]
+```
+
+##  Results
+
+### 3.1 :Plotting the events that are most harmful to the polpulation health
+
+Plot Code
+```{r}
+g<-ggplot(total_injuries,aes(x=EVENT,y=total))
+g+geom_bar(aes(fill=EVENT),stat="identity")+labs(x="Event Type",y="Total Fatalities",title = "Total Deaths Caused by Natural Calamities in US")+theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+
+### 3.2 :Plotting the events that have the greatest economic consequences
+
+Plot code
+```{r}
+g<-ggplot(total_dmg,aes(x=EVENT,y=total_loss/10^9))
+g+geom_bar(aes(fill=EVENT),stat="identity")+labs(x="Event Type",y="Total Cost(in billion dollars)",title = "Total Property and Crop Damage Caused by Natural Calamities in US")+theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+  
+
+### Conclusion  
+
+1.From the 1st plot we can establish that the TORNADO is the most harmful event to population health.  
+
+2.From the 2nd plot we can observe that the FLOOD is the event that has the greatest economic consequences
